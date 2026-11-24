@@ -17,6 +17,37 @@ const MAX_POST_FILE_BYTES = 16384;
 const POST_URL_PATTERN =
   /^https:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/(?:[A-Za-z0-9_]{1,15}|i\/web)\/status\/[0-9]+(?:[?#].*)?$/;
 
+// Called only after POST_URL_PATTERN has rejected a url (the pattern alone decides validity): names the first part
+// of the address that is wrong, so the person fixing POST.json knows exactly what to change.
+function explainUrlRejection(url: string): string {
+  if (url !== url.trim()) return 'it has leading or trailing whitespace';
+  if (!url.startsWith('https://')) return 'it must start with https://';
+
+  const afterScheme = url.slice('https://'.length);
+  const queryStart = afterScheme.search(/[?#]/);
+  const hostAndPath = queryStart === -1 ? afterScheme : afterScheme.slice(0, queryStart);
+  const slash = hostAndPath.indexOf('/');
+  const host = slash === -1 ? hostAndPath : hostAndPath.slice(0, slash);
+  const path = slash === -1 ? '' : hostAndPath.slice(slash);
+
+  if (!/^(?:www\.|mobile\.)?(?:x|twitter)\.com$/.test(host)) {
+    return `host "${host}" is not x.com or twitter.com (www. or mobile. before either is allowed)`;
+  }
+
+  const parts = /^\/(i\/web|[^/]+)\/status\/([^/]*)(\/.*)?$/.exec(path);
+  if (parts === null) {
+    return `path "${path === '' ? '/' : path}" is not /<handle>/status/<id> or /i/web/status/<id>`;
+  }
+  const [, account, id, extra] = parts;
+  if (account !== 'i/web' && !/^[A-Za-z0-9_]{1,15}$/.test(account)) {
+    return `handle "${account}" is not a valid X handle (1 to 15 letters, digits or underscores)`;
+  }
+  if (id === '') return 'the status id after /status/ is missing';
+  if (!/^[0-9]+$/.test(id)) return `status id "${id}" is not digits only`;
+  if (extra !== undefined) return `it has extra path "${extra}" after the status id; remove it`;
+  return 'it does not have the shape https://x.com/<handle>/status/<id>';
+}
+
 function fail(message: string): never {
   console.error(`main.ts: ${message}`);
   process.exit(1);
@@ -64,7 +95,10 @@ function validatePostFile(bytes: Buffer, path: string): void {
     fail(`POST.json at ${path} has no string "url" field`);
   }
   if (!POST_URL_PATTERN.test(url)) {
-    fail(`POST.json "url" is not an X post address (https://x.com/<handle>/status/<id>): ${JSON.stringify(url)}`);
+    fail(
+      `POST.json "url" ${JSON.stringify(url)} is not an X post address ` +
+        `(https://x.com/<handle>/status/<id>): ${explainUrlRejection(url)}`,
+    );
   }
 }
 
